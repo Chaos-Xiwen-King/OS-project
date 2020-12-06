@@ -26,25 +26,31 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
-
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
-    return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+  fn_copy = malloc(strlen(file_name)+1);
 
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  strlcpy (fn_copy, file_name, strlen(file_name)+1);
+  
+//split_file_name用来储存分割的文件名字，创建时复制一个file_name的副本。
+  char *split_file_name;
+  split_file_name = malloc(strlen(file_name)+1);
+  strlcpy (split_file_name, file_name, strlen(file_name)+1);
+//调用strtok_r()函数分割出文件名字，具体过程看string.c头文件。
+  char * save_ptr;
+  split_file_name = strtok_r (split_file_name, " ", &save_ptr);
+  
+//把分割的文件名传递给thread_create。
+  tid = thread_create (split_file_name, PRI_DEFAULT, start_process, fn_copy);
+  free(split_file_name);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    free(fn_copy);
   return tid;
 }
-
 /* A thread function that loads a user process and starts it
    running. */
 static void
@@ -59,10 +65,61 @@ start_process (void *file_name_)
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  
+//split_file_name用来储存分割的文件名字，创建时复制一个file_name的副本。
+  char *split_file_name;
+  split_file_name = malloc(strlen(file_name)+1);
+  strlcpy (split_file_name, file_name, strlen(file_name)+1);
 
+//调用strtok_r()函数分割出文件名字，具体过程看string.c头文件。
+  char *save_ptr;
+  split_file_name = strtok_r (split_file_name, " ", &save_ptr);
+
+//把分割的文件名传递给load，由它分配内存。
+  success = load (split_file_name, &if_.eip, &if_.esp);
+  free(split_file_name);
+/*这部分内容是参数、文件名、文件名地址和参数地址入栈的部分，整个过程在3.5.1中进行了非常详细的描述*/
+//源pintos文件没有关于当内存分配成功(success==true)时候的操作，需要按照3.5.1中的描述实现。
+  if(success){
+    //argc记录参数个数，argv是一个指针数组，储存参数的地址,用int类型方便赋值
+    int argc = 0;
+    int argv[100];
+
+  //分割file_name的拷贝并且入栈
+    char *fn_copy, *token;
+    fn_copy = malloc(strlen(file_name)+1);
+    strlcpy (fn_copy, file_name, strlen(file_name)+1);
+    for (token = strtok_r (fn_copy, " ", &save_ptr); token != NULL; token = strtok_r (NULL, " ", &save_ptr)){
+        //把文件名和参数复制到栈中
+        if_.esp -= (strlen(token)+1);
+        memcpy (if_.esp, token, strlen(token)+1);
+        //把它们在栈中的地址存起来
+        argv[argc++] = (int)if_.esp;
+    }
+    //argv[argc]必须是0
+    argv[argc] = 0;
+    //由于esp指针类型是void*，现在的esp可能没有对齐4，需要向下对齐。文档3.5.1说明指针对齐4会更快
+    if_.esp = (void*)((int)if_.esp & 0xfffffffc);
+
+    //把它们在栈中的地址入栈
+    for(int i = argc; i >= 0; i--){
+      if_.esp -= 4;
+      *(int *)if_.esp = argv[i];
+    }
+    //入栈argv数组的地址，注意是当前的if_.esp而非临时的argv数组
+    if_.esp -= 4;
+    *(int *)if_.esp = if_.esp + 4;
+    //入栈argc的值
+    if_.esp -= 4;
+    *(int *)if_.esp = argc;
+    //入栈一个虚的返回地址
+    if_.esp -= 4;
+    *(int *)if_.esp = 0;
+
+    free (fn_copy);
+  }
+  
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success) 
     thread_exit ();
 
@@ -88,6 +145,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  for(int i=1;i<10000000;i++);
   return -1;
 }
 
