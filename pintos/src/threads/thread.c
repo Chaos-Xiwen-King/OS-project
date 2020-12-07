@@ -4,10 +4,12 @@
 #include <random.h>
 #include <stdio.h>
 #include <string.h>
+#include <filesys/file.h>
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
@@ -36,6 +38,9 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
+
+/*Use a lock to lock process when do file operation*/
+static struct lock lock_f;
 
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
@@ -71,6 +76,17 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 
+void 
+filesys_lock()
+{
+  lock_acquire(&lock_f);
+}
+
+void 
+filesys_unlock()
+{
+  lock_release(&lock_f);
+}
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -90,6 +106,7 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
+  lock_init(&lock_f);
   list_init (&ready_list);
   list_init (&all_list);
 
@@ -98,6 +115,7 @@ thread_init (void)
   init_thread (initial_thread, "main", PRI_DEFAULT);
   initial_thread->status = THREAD_RUNNING;
   initial_thread->tid = allocate_tid ();
+
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -123,7 +141,6 @@ void
 thread_tick (void) 
 {
   struct thread *t = thread_current ();
-
   /* Update statistics. */
   if (t == idle_thread)
     idle_ticks++;
@@ -170,7 +187,6 @@ thread_create (const char *name, int priority,
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
-  tid_t tid;
 
   ASSERT (function != NULL);
 
@@ -181,7 +197,7 @@ thread_create (const char *name, int priority,
 
   /* Initialize thread. */
   init_thread (t, name, priority);
-  tid = t->tid = allocate_tid ();
+  
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -201,7 +217,7 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
-  return tid;
+  return t->tid;
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -286,10 +302,28 @@ thread_exit (void)
   process_exit ();
 #endif
 
+  intr_disable ();
+
+  printf ("%s: exit(%d)\n",thread_name(), thread_current()->child->status);
+  sema_up (&thread_current()->child->finished);
+  file_close (thread_current ()->file);
+  struct list_elem *e;
+  struct list *files = &thread_current()->files;
+
+  while(!list_empty (files))
+  {
+    e = list_pop_front (files);
+    struct open_file *f = list_entry (e, struct open_file, file_elem);
+    filesys_lock ();
+    file_close (f->file);
+    filesys_unlock ();
+    list_remove (e);
+    free (f);
+  }
+
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
-  intr_disable ();
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
   schedule ();
@@ -464,6 +498,26 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
+
+  if (t==initial_thread) t->parent=NULL;
+  else t->parent = thread_current ();
+  t->file = NULL;
+  t->fd = STDOUT_FILENO + 1;
+  list_init (&t->childs);
+  list_init (&t->files);
+  sema_init (&t->child_load_finished, 0);
+  t->child_load_success = true;
+  
+  if(strcmp(name, "main")!=0){
+    t->tid = allocate_tid ();
+    t->child = malloc(sizeof(struct child));
+    t->child->tid = t->tid;
+    t->child->status = UINT32_MAX;
+    t->child->have_been_wait = false;
+    sema_init (&t->child->finished, 0);
+    list_push_back (&thread_current()->childs, &t->child->child_elem);
+  }
+
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
@@ -578,7 +632,9 @@ allocate_tid (void)
 
   return tid;
 }
-
+
+
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);

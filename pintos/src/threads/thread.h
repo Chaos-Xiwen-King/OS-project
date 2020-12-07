@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include <threads/synch.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +24,10 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+
+
+
 
 /* A kernel thread or user process.
 
@@ -80,6 +85,22 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
+   struct child
+  {
+    tid_t tid;
+    bool have_been_wait;
+    struct semaphore finished;
+    int status;
+
+    struct list_elem child_elem;
+  };
+
+struct open_file
+  {
+    int fd;
+    struct file* file;
+    struct list_elem file_elem;
+  };
 struct thread
   {
     /* Owned by thread.c. */
@@ -100,13 +121,28 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    struct list childs;
+    struct child * child;
+    struct semaphore child_load_finished;
+    bool child_load_success;
+    struct thread* parent;
+    
+
+    struct list files;
+    int fd;
+    struct file * file;
+
   };
+
+
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
 extern bool thread_mlfqs;
-
+void filesys_lock(void);
+void filesys_unlock(void);
 void thread_init (void);
 void thread_start (void);
 
@@ -137,5 +173,6 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
 
 #endif /* threads/thread.h */
