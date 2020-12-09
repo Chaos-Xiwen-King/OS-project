@@ -1,0 +1,210 @@
+             +--------------------------+
+             |          CS 140          |
+             | PROJECT 2: USER PROGRAMS |
+             |     DESIGN DOCUMENT      |
+             +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+康曦文 18373607
+郭凌宇 18373669
+赵致远 18373638
+陈宇畅 18373609
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+* 参考他人的思路
+https://wenku.baidu.com/view/eed6bbdaa48da0116c175f0e7cd184254b351ba8.html
+
+               ARGUMENT PASSING
+               ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+该任务部分没有添加任何新的数据结构以及函数声明。
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+该任务需要分割命令行输入中的文件名和参数，并且把它们准确的放入栈中。
+其中，分割命令行输入字符串的任务在 process_execute() 函数中实现，压栈操作在 start_process() 函数中实现，这是因为 process_execute() 函数中会调用 thread_create() 函数创建一个执行 start_process() 函数的新进程。创建进程后不会马上执行，需要等待内核调度。
+分割指令提取参数时，按照注释要求，我们不直接使用文件名而是使用它的拷贝。
+执行压栈时，先获取栈顶指针，并按照 argv [ ] 参数值、argv [ ] 参数地址、argc 参数个数、ret Addr 返回地址的顺序依次入栈，注意 strtok_r 的使用。其中，argv 的存入顺序为下标由大到小。
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+因为 strtok() 是一个线程不安全的函数，函数内部使用静态变量来记录指向字符串的位置，且会对源字符串数据内存空间进行修改，当多个线程同时调用该函数时会出现数据混乱的问题，而 strtok_r() 使用传入的指针作为变量指定识别的位置。
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+
+(1) 减少调用内核时间
+(2) 类Unix系统处理方式更加高级，包括处理多条命令行输入
+(3) 类Unix系统在将指令传入内核前会先检查输入，防止内核错误
+
+                 SYSTEM CALLS
+                 ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+/* in thread.h */
+/* 为每个进程创建一个 child 结构体保存相关信息，即使进程退出后该进程的父进程也可以通过维护的 struct list childs 队列来访问 */
+struct child
+{
+    tid_t tid;
+    bool have_been_wait; // 进程是否处于等待状态
+    struct semaphore finished;  // 进程等待状态的信号量
+    int status;  // 保存进程的退出状态
+
+    struct list_elem child_elem;
+};
+
+/* 为每个打开文件创建一个 file 结构体保存相关信息 */
+struct open_file
+{
+    int fd;
+    struct file* file;
+    struct list_elem file_elem;
+};
+
+/* thread 结构体维护的信息 */
+struct thread
+{
+    ...
+    struct list childs;  // 该进程子进程 child 结构体队列
+    struct child * child;  // 该进程自身的 child 结构体
+    struct semaphore child_load_finished;  // 该进程子进程创建状态的信号量
+    bool child_load_success;  // 该进程子进程是否创建成功
+    struct thread* parent;
+    
+    struct list files;  // 该进程打开文件 open_file 结构体队列
+    int fd;
+    struct file * file;  // 该进程自身执行的文件
+};
+
+/* in thread.c */
+/* 为整个文件资源加的一把锁，当一个进程获得锁之后，其余进程都不能进行任何文件操作  */
+static struct lock lock_f;
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+在我们的设计实现中，为每一个打开文件创建一个 open_file 结构体，其中存储文件打开的相关信息，由于一份文件能够被多个进程同时打开，所以该结构体不唯一，出现于每个打开了该文件的进程的 struct list files 内。
+而在 pintos 中，真正的文件结构体被维护在 file.c 文件里，从该结构体中可以看到，每个磁盘文件和一个 inode 结构体才是真正的一一映射。
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+/* SYS_READ 系统调用 */
+void sys_read (struct intr_frame* f);
+
+/* SYS_WRITE 系统调用 */
+void sys_write (struct intr_frame* f);
+
+通过 f->esp 栈指针从栈中取出读写缓冲区地址 *buffer、大小 size 以及操作描述符 fd。如果 fd 是从标准输入中读，则直接利用 input_getc() 读到 buffer 里即可。否则为从文件读入，需要先利用 fd 从当前进程维护的打开文件队列中找到该打开文件的结构体，获取打开文件结构体中的真正文件指针，接着对文件资源上锁，调用 file_read() 函数完成操作，完成后释放锁即可。
+
+sys_write 和 sys_read 原理类似，只不过将读操作改为写操作即可。
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+???
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+首先通过栈指针获取子进程 id，进而调用 process_wait() 函数执行。
+实现 process_wait() 函数，首先依据子进程 id 在当前进程维护的子进程结构体队列里找到该子进程的结构体，利用 sema_down(&child->finished) 等待子进程退出时下调信号量，虽然此时子进程已经退出，但子进程的退出状态已被保存在子进程的结构体中，此时即可获取，最后释放子进程结构体开销即可。
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+/* in /userprog/syscall.c */
+void * assert_is_vaddr(const void *vaddr, int offset);
+
+用户程序传入内核的指针所指向的地址的合法性需要先进行判断，我们定义 assert_is_vaddr() 函数来判断指针的合法性。该判断函数包含两部分：一是调用 is_user_vaddr() 函数判断指针携带的虚拟地址是否是映射到用户内存空间的虚拟地址，二是调用 pagedir_get_page() 函数判断是否能够通过页表获取该虚拟地址所映射的页。
+要注意的是，不仅要判断 vaddr 本身是否合法，还要判断 vaddr+offset 是否合法。
+如果有一个虚拟地址不合法，则将当前进程的状态设为 -1，调用 thread_exit() 函数结束当前进程释放资源，包括调用 process_exit() 释放页表资源，释放所有该进程的打开文件资源，以及其他该进程本身初始化时分配的资源。
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+根据源代码可知， process_execute() 只是负责调用 thread_create() 创建一个新进程，真正的新用户程序 load 是在 start_process() 函数中完成的。
+因此，我们在 thread 结构体中新增信号量 child_load_finished，当 sys_exec 调用 process_execute() 创建新进程时调用 sema_down() 等待信号量释放，在 start_process() 完成加载后调用 sema_up() 释放信号量，这样就可以保证在加载完成时才会返回。而执行结果利用返回值传递即可。
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+父进程等待子进程结束，如果子进程已经结束并释放则在父进程维护的子进程 child 结构体队列中就无法查找到子进程的 child 结构体，如果子进程没结束，利用信号量等待子进程结束。父进程没有等待子进程结束就已结束，父进程只会释放自身的资源，并不会影响子进程。
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+第二种利用 page_fault() 对访问非法内存空间地错误进行处理的方法相较于直接进程退出更好，但实现起来也更加复杂，时间不多，只能选择第一种方式实现。
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+优点：
+(1) 单个结构体占据空间不大
+(2) 方便进程获取自身打开的文件信息
+
+缺点：
+(1) 多个结构体可能打开同一个文件，导致结构体反复存储且 fd 不一致
+(2) 消耗内核空间，打开文件过多可能会导致内核占满
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+在我们的实现方式中没有修改它。
