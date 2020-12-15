@@ -119,13 +119,12 @@ sys_exit (struct intr_frame* f)
   thread_current()->child->status = *(p+1);
   thread_exit();
 }
-
 void 
 sys_exec (struct intr_frame* f)
 {
   int *p = (int*)f->esp;
   assert_is_vaddr (p+1, 3);
-  assert_is_vaddr(*(p+1), 3);
+  assert_is_vaddr(*(p+1), 3); // 文件虚拟地址 ?
   f->eax = process_execute((char*)*(p+1));
 }
 
@@ -165,7 +164,7 @@ sys_open (struct intr_frame* f)
   assert_is_vaddr (p+1, 3);
   assert_is_vaddr (*(p+1), 3);
   filesys_lock();
-  struct file *file_opened = filesys_open((const char *)*(p+1));
+  struct file * file_opened = filesys_open((const char *)*(p+1));
   filesys_unlock();
   struct thread *t = thread_current();
   if (file_opened)
@@ -187,7 +186,7 @@ sys_write (struct intr_frame* f)
 {
   int *p = (int*)f->esp;
   assert_is_vaddr (p+7, 3);
-  assert_is_vaddr (*(p+6), 3);
+  assert_is_vaddr (*(p+6), 3); // ?
   int fd = *(p+1);
   char * buffer = (char *)*(p+2);
   int size = *(p+3);
@@ -206,7 +205,7 @@ sys_write (struct intr_frame* f)
     } 
     else
     {
-      f->eax = 0;
+      f->eax = 0; // ?
     }
   }
 }
@@ -216,7 +215,7 @@ sys_seek(struct intr_frame* f)
   int *p = (int*)f->esp;
   assert_is_vaddr (p+5, 3);
   int fd = *(p+1);
-  struct open_file *file_find = find_file (fd);
+  struct open_file * file_find = find_file (fd);
   if (file_find)
   {
     filesys_lock ();

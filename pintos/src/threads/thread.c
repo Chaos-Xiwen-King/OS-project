@@ -39,7 +39,7 @@ static struct thread *initial_thread;
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
 
-/*Use a lock to lock process when do file operation*/
+/* Use a lock to lock process when do file operation*/
 static struct lock lock_f;
 
 /* Stack frame for kernel_thread(). */
@@ -106,7 +106,7 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
-  lock_init(&lock_f);
+  lock_init (&lock_f);
   list_init (&ready_list);
   list_init (&all_list);
 
@@ -498,11 +498,10 @@ init_thread (struct thread *t, const char *name, int priority)
   t->priority = priority;
   t->magic = THREAD_MAGIC;
 
-
   if (t==initial_thread) t->parent=NULL;
   else t->parent = thread_current ();
   t->file = NULL;
-  t->fd = STDOUT_FILENO + 1;
+  t->fd = STDOUT_FILENO + 1; // ?
   list_init (&t->childs);
   list_init (&t->files);
   sema_init (&t->child_load_finished, 0);

@@ -85,7 +85,7 @@ typedef int tid_t;
    only because they are mutually exclusive: only a thread in the
    ready state is on the run queue, whereas only a thread in the
    blocked state is on a semaphore wait list. */
-   struct child
+struct child
   {
     tid_t tid;
     bool have_been_wait;
@@ -94,7 +94,6 @@ typedef int tid_t;
 
     struct list_elem child_elem;
   };
-
 struct open_file
   {
     int fd;

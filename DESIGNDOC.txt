@@ -138,7 +138,9 @@ sys_write 和 sys_read 原理类似，只不过将读操作改为写操作即可
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
-???
+对于4096字节:如果第一次调用pagedir_get_page()的时候得到的是页表的首部指针，那么就一定可以容得下4096字节，那么就只需要检查一次。如果得到的不是页表首部指针，就需要检查两次。
+对于2字节:同理，如果得到的是页表的最后一个字节，就需要检查两次，否则只需要检查一次。
+没有想到什么更好地改进方案。
 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
